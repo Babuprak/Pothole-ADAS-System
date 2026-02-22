@@ -24,7 +24,7 @@ model = YOLO('best.pt')
 
 # 4. Connect Phone/Camera Stream
 # Change this IP to your current phone IP from IP Webcam
-url = "http://192.168.68.105:8080/video"
+url = "http://IP WEBCAM.xxx.xx.xxx:8080/video"
 cap = cv2.VideoCapture(url)
 
 print("🚀 ADAS System Active with ByteTrack...")
