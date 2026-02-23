@@ -9,94 +9,74 @@ from ultralytics import YOLO
 LOG_DIR = "pothole_logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 log_file = os.path.join(LOG_DIR, "detection_history.csv")
-
-# TRACKING STORAGE: Keeps track of IDs already logged to prevent duplicates
 logged_potholes = set()
 
 # 2. Setup Log File Header
 if not os.path.exists(log_file):
     with open(log_file, mode='w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["Timestamp", "Track_ID", "Image_Path", "Confidence"])
+        writer.writerow(["Timestamp", "Track_ID", "Confidence", "Distance", "Image_Path"])
 
-# 3. Load Model (YOLOv8/v11)
+# 3. Load Model
 model = YOLO('best.pt')
 
-# 4. Connect Phone/Camera Stream
-# Change this IP to your current phone IP from IP Webcam
+# 4. Connect Phone Stream (Check your IP: 105)
 url = "http://192.168.68.105:8080/video"
 cap = cv2.VideoCapture(url)
 
-print("🚀 ADAS System Active with ByteTrack...")
+print("\n" + "=" * 50)
+print(f"{'TIME':<10} | {'ID':<5} | {'CONF':<6} | {'DIST':<6} | STATUS")
+print("=" * 50)
 
 while cap.isOpened():
     ret, frame = cap.read()
-    if not ret:
-        break
+    if not ret: break
 
-    # --- BYTE TRACK ENABLED ---
-    # persist=True keeps IDs across frames
-    # tracker="bytetrack.yaml" uses the specific ByteTrack algorithm
     results = model.track(frame, conf=0.6, persist=True, tracker="bytetrack.yaml", stream=True)
-
     h, w, _ = frame.shape
 
     for r in results:
-        # Check if any objects were actually tracked (have IDs)
-        if r.boxes is None or r.boxes.id is None:
-            continue
+        if r.boxes is None or r.boxes.id is None: continue
 
-        # Extract data
         boxes = r.boxes.xyxy.cpu().numpy().astype(int)
         ids = r.boxes.id.cpu().numpy().astype(int)
         confs = r.boxes.conf.cpu().numpy()
 
         for box, track_id, conf in zip(boxes, ids, confs):
             x1, y1, x2, y2 = box
+            dist_val = max(0, (1.0 - (y2 / h)) * 8.0)
+            label = f"ID:{track_id} CF:{conf:.2f} D:{dist_val:.1f}m"
 
-            # --- WARNING ZONE LOGIC ---
-            # If the pothole bottom (y2) is in the middle section of the screen
             if (h * 0.45) < y2 < (h * 0.70):
-
-                # Visual Alert (Red Box)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                cv2.putText(frame, f"WARNING: ID {track_id}", (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-
-                # --- UNIQUE LOGGING LOGIC ---
-                # Only log if this is a NEW ID we haven't recorded yet
+                color = (0, 0, 255)  # Red
                 if track_id not in logged_potholes:
-                    winsound.Beep(1000, 300)  # Audible Alert
+                    winsound.Beep(1000, 300)
 
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    img_name = f"pothole_id{track_id}_{timestamp}.jpg"
+                    now = datetime.now()
+                    timestamp_file = now.strftime("%Y%m%d_%H%M%S")
+
+                    # --- THE FIX: ID FIRST WITH PADDING ---
+                    # Using :04d makes it ID_0001, ID_0043 so sorting works perfectly
+                    img_name = f"ID_{track_id:04d}_{timestamp_file}.jpg"
                     img_path = os.path.join(LOG_DIR, img_name)
 
-                    # Save visual proof
                     cv2.imwrite(img_path, frame)
 
-                    # Write to CSV
                     with open(log_file, mode='a', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow([timestamp, track_id, img_path, f"{conf:.2f}"])
+                        csv.writer(f).writerow(
+                            [now.strftime("%H:%M:%S"), track_id, f"{conf:.2f}", f"{dist_val:.1f}m", img_name])
 
-                    # Remember this ID so we don't log it again in the next frame
                     logged_potholes.add(track_id)
-                    print(f"✅ Logged New Pothole: ID {track_id}")
-
+                    print(
+                        f"{now.strftime('%H:%M:%S'):<10} | {track_id:<5} | {conf:.2f} | {dist_val:.1f}m | 🚨 LOGGED: {img_name}")
             else:
-                # Normal Detection (Yellow Box)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                cv2.putText(frame, f"ID: {track_id}", (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                color = (0, 255, 255)  # Yellow
 
-    # Display the ADAS Feed
-    cv2.imshow("ADAS Detection & ByteTrack Logger", frame)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-    # Press 'q' to exit
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    cv2.imshow("ADAS Feed", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
 cv2.destroyAllWindows()
-print(f"🏁 Session Ended. Total unique potholes detected: {len(logged_potholes)}")
